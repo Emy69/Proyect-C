@@ -1,0 +1,58 @@
+# Origen de .github/workflows/donantes.yml en Emy69/Proyect-C.
+# Se despliega ahí junto a actualizar_donantes.py y donadores.json.
+
+name: Actualizar donantes
+
+on:
+  schedule:
+    - cron: "0 5 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    # A nivel de trabajo: `if` de paso no resuelve `secrets` ni el `env` propio.
+    env:
+      GH_PAT: ${{ secrets.GH_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Pedir la lista a Patreon
+        id: patreon
+        env:
+          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
+          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
+          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
+          PATREON_CAMPAIGN_ID: ${{ secrets.PATREON_CAMPAIGN_ID }}
+        run: python actualizar_donantes.py actualizar donadores.json
+
+      # Rotación del refresh token. Opcional: requiere GH_PAT con permiso de
+      # secretos. Sin él se omite y se reutiliza el secreto actual.
+      - name: Guardar el nuevo refresh token
+        if: steps.patreon.outputs.refresh_token != '' && env.GH_PAT != ''
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          printf '%s' "${{ steps.patreon.outputs.refresh_token }}" \
+            | gh secret set PATREON_REFRESH_TOKEN --repo "$GITHUB_REPOSITORY"
+
+      - name: Commitear si cambió algo
+        run: |
+          if git diff --quiet -- donadores.json; then
+            echo "Sin cambios en la lista."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add donadores.json
+          git commit -m "donantes: actualización automática $(date -u +%Y-%m-%d)"
+          git push
